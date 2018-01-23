@@ -1,0 +1,230 @@
+---
+title: "J20_EMG_Analysis"
+author: "Iris Oren"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document: default
+  pdf_document: default
+---
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Description
+This .rmd file analyses simultaneously recorded EEG and EMG data to assess whether EMG power is reduced during period of high theta/delta during sleep (ie. are high theta periods indicative of REM or ectopic theta)
+
+*Data
+Dual EEG and EMG data from 4 animals analysed using SCPP5 processor. 
+
+SCPP5.tcl was run on 8s epochs of Data, with glitch=200. The processor generated text files, : "ndfFilename_SCPP5V1.txt", organised in individual folders by AnimalID
+
+(Raw Data: Dropbox/Analysis/Neuroarchiver/J20EEG/SCPP5V1).
+
+Processor output for 8s epoch
+Filename IntervalTime Loss Spikes SpikeBursts DeltaPower ThetaPower EMGPower
+
+###Package Initialisation 
+
+First, load packages and source files
+```{r LoadPackages_Chunk, echo=FALSE, include=FALSE}
+library(lubridate)
+library(plyr)
+library(Rmisc)
+library(lazyeval) #Needed for using ggplot2 library
+library(ggplot2)
+library(grid)
+library(cowplot)
+library(stringr)
+library(scatterplot3d)
+library(data.table)
+library(perm)
+library(circular)
+library(plotrix)
+library(readr)  #for col_skip in read.csv
+library(lme4)
+library(lsmeans)
+library(multcomp)
+library(CircOutlier)
+library(dplyr)
+
+
+sourceDir <- function(path, trace = TRUE, ...) {
+    for (nm in list.files(path, pattern = "\\.[Rr]$")) {
+       if(trace) cat(nm,":")           
+       source(file.path(path, nm), ...)
+       if(trace) cat("\n")
+    }
+}
+sourceDir("R/")  #All function in R/ folder relative to project
+```
+### Datafile and variable initialisation
+Specify files and folders to be used
+```{r VariableInitialisationChunk, ECHO=FALSE}
+NDFDataParentFolder<-"~/Dropbox/ANALYSIS/Neuroarchiver/J20EEG/SCPP5V1"
+RecordingInfoFile<-"./Data/RecordingInfoEMG.csv"
+FalsePositiveFile<-"./Data/SCPP5V1_Performance.csv"
+LossIntervalPercentageFile<-"./Data/LossIntervalPercentageEMG.csv"
+
+# RecordingInfoFile<-"./Data/RecordingInfo_WT_VideoScoring.csv"
+OutputFolder<-"./Output"
+```
+
+
+```{r ImportRecordingInformation, ECHO=FALSE, include=TRUE}
+detach("package:dplyr", character.only = TRUE)
+library("dplyr", character.only = TRUE)
+
+FalsePositiveCutOff=0.1
+LossIntervalPercentageThreshold<-5 #Limit for percent of intervals lost to include animal in analysis
+
+SummaryDataframe<-read.csv(RecordingInfoFile, na = "empty")
+SummaryDataframe$AnimalID<-as.character(SummaryDataframe$AnimalID)
+SummaryDataframe$TimeZone<-as.character(SummaryDataframe$TimeZone)
+
+```
+
+
+```{r ImportAndTransformNDFOutput_chunk, ECHO=FALSE}
+if(file.exists("./Output/SCPPDataframeEMGOriginal.csv")){
+  SCPPDataframeEMG<-read.csv("./Output/SCPPDataframeEMG.csv")
+  RemoveOption<-0
+  } else{  #Else create SCPPDataframeEMG.csv
+    
+      #Initialise variables all animals
+     # SCPPDataframeList<-list()
+      SCPPDataframeEMG<-data.frame()
+      
+      for(i in 1:nrow(SummaryDataframe)){     #Loop through animals
+      
+        SCPPDataframe<-data.frame() #Initialise dataframe for current animal
+        
+       #Write AnimalID, genotype and TimeZone to variable for current animal
+              AnimalIDCurrent<-SummaryDataframe$AnimalID[i]
+              GenotypeCurrent<-SummaryDataframe$Genotype[i]
+              TimeZoneCurrent<-SummaryDataframe$TimeZone[i]
+              
+        #i. Set AnimalID subfolder
+        
+          FullPath<-paste(NDFDataParentFolder, AnimalIDCurrent, sep="/")
+       FullPath<-paste(FullPath, "/", sep="")
+       #Next import all files in input_path to create a new r dataframe called  `SCPPDataframe'
+          SCPPDataframe<-ImportData(FullPath)
+        
+          
+
+           # Exclude Loss >20 % and Artifact intervals which have delta power >1000ksq counts and write the number of ExcludedIntervals to ExcludedIntervalsVariable in SCPPDataframe
+          LossThreshold=20
+          DeltaThreshold=1000  
+          
+         
+           # Add Variable for ExcludeInterval: If Loss>LossThreshold or  delta power >DeltaThreshold
+          
+          ExcludedIntervalsVariable<-which((SCPPDataframe$Loss>LossThreshold)| (SCPPDataframe$Delta>DeltaThreshold))
+          #Set ExcludeInterval to a default of 0
+          SCPPDataframe$ExcludeInterval<-0
+          #ExcludeInterval<-1 for exclusion
+          SCPPDataframe$ExcludeInterval[ExcludedIntervalsVariable]<-1
+            
+
+          
+        #Apend time information to Data frame  
+          SCPPDataframe <- GetTimeOfDayAndDate(SCPPDataframe, TimeZoneCurrent)
+         # SCPPDataframe$TimeOfDay<-as.POSIXct(SCPPDataframe$TimeOfDay, tz=TimeZoneCurrent)
+          
+           
+      #Apend AnimalID variable and Genotype
+          AnimalIDVariable<-rep(AnimalIDCurrent, nrow(SCPPDataframe))
+          SCPPDataframe<-cbind(SCPPDataframe, AnimalIDVariable)
+          Genotype<-rep(GenotypeCurrent, nrow(SCPPDataframe))
+          SCPPDataframe<-cbind(SCPPDataframe, Genotype)
+      
+       #Apend SCPPDataframe to SCPPDataframeEMG. To access an animal, used "filter()" 
+          SCPPDataframeEMG<-rbind(SCPPDataframeEMG, SCPPDataframe)
+}
+  
+# Add LightDark variable where LightDark=TRUE is lights on
+    Hour<-lubridate::hour(SCPPDataframeEMG$TimeOfDay)
+    SCPPDataframeEMG$LightDark <- Hour %in% seq(7, 18)
+    
+# Add ThetaOverDelta
+    SCPPDataframeEMG$ThetaOverDelta<-SCPPDataframeEMG$Theta/SCPPDataframeEMG$Delta
+       
+# Rename SpikeCount to Single spikecount and calculate total spike count as burst + single
+    SCPPDataframeEMG$SingleSpikeCount<-SCPPDataframeEMG$SpikeCount
+    SCPPDataframeEMG$SpikeCount<-SCPPDataframeEMG$SingleSpikeCount+SCPPDataframeEMG$BurstCount
+    
+
+  RemoveOption<-1
+    }
+# Exclude intervals
+SCPPDataframeEMG<-filter(SCPPDataframeEMG, ExcludeInterval==0)
+
+if(RemoveOption==1){
+    rm(SCPPDataframe, FalsePositives, LossIntervalPercentage, Treatment, Genotype)
+}
+```
+
+Import VideoScoring dataframe and amend with UnixTime 
+```{r MakeVideoScoringDataframe, echo=FALSE, include=FALSE}
+
+FileList<-c("./Data/VideoScoring/VideoScoringJ0527.csv",
+            "./Data/VideoScoring/VideoScoringJ0528.csv",   
+            "./Data/VideoScoring/VideoScoringJ0530.csv",  
+            "./Data/VideoScoring/VideoScoringJ0533.csv"
+            )
+
+
+AnimalIDList<-c("J0527", "J0528", "J0530", "J0533")
+SCPPDataframeVideoTimesEMG<-data.frame()
+AnimalIDVideoStartEnd<-list() #A list to store Start and End times for video data. The list index is AnimalID_FileIndex eg. JF220_1
+
+for(FileIndex in 1:length(FileList)){
+ 
+   VideoScoringFilename<-FileList[[FileIndex]] 
+  
+   AnimalIDCurrent<-AnimalIDList[[FileIndex]]
+   
+    #Import
+    VideoScoring<- read.csv(VideoScoringFilename)
+    VideoScoring<-dplyr::select(VideoScoring, DateOfEEG, TimeOfEEG,  SleepWake)
+    VideoScoring$SleepWake<-as.character(VideoScoring$SleepWake) #needs to be character. "as.factor" converts to numeric factors
+    
+    #Add date to Time to make TimeString
+    VideoScoring$DateTime<-paste(VideoScoring$DateOfEEG, VideoScoring$TimeOfEEG)
+    
+    VideoScoring$DateTime<-strptime(as.character(VideoScoring$DateTime), "%d/%m/%Y %H:%M:%S")
+    
+    #Convert to UnixTime
+    VideoScoring$UnixTime<-(as.numeric(as.POSIXct(VideoScoring$DateTime)))
+    #VideoScoring<-VideoScoring[complete.cases(VideoScoring)]
+    #Determine Start and End time of video file for particular day
+    VideoStartTime<-VideoScoring$UnixTime[1]
+    VideoEndTime<-VideoScoring$UnixTime[nrow(VideoScoring)]
+    
+    #Create vector with videostart and videoend variables for this FileIndex iteration
+    AnimalIDVideoStartEndVectorCurrent<-c(as.numeric(VideoStartTime), as.numeric(VideoEndTime))
+    
+    ListIndex<-paste(AnimalIDCurrent, as.character(FileIndex), sep="_")
+    AnimalIDVideoStartEnd[[ListIndex]]<-AnimalIDVideoStartEndVectorCurrent
+    
+    #Filter SCPP1 between start and endtime of video for particular day
+
+  SCPPDataframeVideoTimes<-filter(SCPPDataframeAll,
+                                  AnimalIDVariable==AnimalIDCurrent)
+  SCPPDataframeVideoTimes<-filter(SCPPDataframeVideoTimes,
+                                  InitialisedTime>=VideoStartTime)
+    SCPPDataframeVideoTimes<-filter(SCPPDataframeVideoTimes, InitialisedTime<=VideoEndTime)
+    
+    
+    #Add video score to dataframe for which video is available
+    
+    SCPPDataframeVideoTimes$SleepWake<-AddVideoScoreToSCPPData(SCPPDataframeVideoTimes$InitialisedTime, VideoScoring$UnixTime, VideoScoring$SleepWake)
+    SCPPDataframeVideoTimesAll<-rbind(SCPPDataframeVideoTimesAll, SCPPDataframeVideoTimes)
+  
+    SCPPDataframeVideoTimesAll$SleepWake<-as.factor(SCPPDataframeVideoTimesAll$SleepWake)
+}
+
+rm(SCPPDataframeVideoTimes, VideoScoring)
+```
