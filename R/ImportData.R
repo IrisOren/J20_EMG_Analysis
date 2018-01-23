@@ -7,23 +7,23 @@
 #v2: 130617: Amended for SCPP3 which has loss as a float instead of EpochClass
 #v3: 200617: Amended for SCPP4 to add burst count
 #v4: 100716: Amend to import from output files saved in individual subdirectories for each folder
-
+#v5: 230118: Amended for SCPP5 with EMG
 ImportData<-function(data_dir){
   DirList<-list.dirs(path=data_dir)
   EndDir<-length(DirList)-1  #Number of directories minus the current /. directory
   for (CurrentDir in 1:EndDir){
     #setwd(Dirist[CurrentDir])
     DataSubDir<- DirList[CurrentDir+1]
-    FileList<-list.files(DataSubDir, pattern="*SCPP4V1.txt") #List of all SCPP4V1.txt files in working directory
+    FileList<-list.files(DataSubDir, pattern="*SCPP5V1.txt") #List of all SCPP4V1.txt files in working directory
     EndFile<-length(FileList)  
     for (i in 1:EndFile){
       #Write to a temp dataframe
       path_and_file<-paste(DataSubDir, FileList[i], sep="/") #Use full path to file to allow for knitr to work
       DF_temp<-read.table(path_and_file, sep=" ")
       #Change variable names
-      names(DF_temp)<-c("FileName", "Seconds", "Chan", "Loss", "SpikeCount", "BurstCount", "Delta", "Theta")
+      names(DF_temp)<-c("FileName", "Seconds", "Chan", "Loss", "SpikeCount", "BurstCount", "Delta", "Theta", "EMG")
       #Remove columns with null data
-      DF_temp<-select(DF_temp, FileName, Seconds, Chan, Loss, SpikeCount, BurstCount, Delta, Theta) 
+      DF_temp<-select(DF_temp, FileName, Seconds, Chan, Loss, SpikeCount, BurstCount, Delta, Theta, EMG) 
       #Add current temp dataframe to combined SCPP_DF
        if(i==1 & CurrentDir==1){    #If importing first file in first subdirectory
         SCPP_DF<-DF_temp
