@@ -1,0 +1,6 @@
+ApendTreatmentFactor <- function(df, drug_date_time)
+#Treatment <- data.frame(c())
+df$Treatment[which(df$TimeOfDay<strptime(drug_date_time, "%Y-%m-%d %H:%M:%S"))]="Control"
+df$Treatment[length(Treatment)+1]="Unknown"
+df$Treatment[(length(Treatment)+1):(dim(df))[1]]="Drug"
+#df<- cbind(df, Treatment)
