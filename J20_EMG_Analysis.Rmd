@@ -119,28 +119,28 @@ if(file.exists("./Output/SCPPDataframeEMGOriginal.csv")){
           DeltaThreshold=1000  
           
          
-           # Add Variable for ExcludeInterval: If Loss>LossThreshold or  delta power >DeltaThreshold
+# Add Variable for ExcludeInterval: If Loss>LossThreshold or  delta power>DeltaThreshold
           
-          ExcludedIntervalsVariable<-which((SCPPDataframe$Loss>LossThreshold)| (SCPPDataframe$Delta>DeltaThreshold))
-          #Set ExcludeInterval to a default of 0
+ExcludedIntervalsVariable<-which((SCPPDataframe$Loss>LossThreshold)| (SCPPDataframe$Delta>DeltaThreshold))
+#Set ExcludeInterval to a default of 0
           SCPPDataframe$ExcludeInterval<-0
-          #ExcludeInterval<-1 for exclusion
+#ExcludeInterval<-1 for exclusion
           SCPPDataframe$ExcludeInterval[ExcludedIntervalsVariable]<-1
             
 
           
-        #Apend time information to Data frame  
+#Apend time information to Data frame  
           SCPPDataframe <- GetTimeOfDayAndDate(SCPPDataframe, TimeZoneCurrent)
-         # SCPPDataframe$TimeOfDay<-as.POSIXct(SCPPDataframe$TimeOfDay, tz=TimeZoneCurrent)
+# SCPPDataframe$TimeOfDay<-as.POSIXct(SCPPDataframe$TimeOfDay, tz=TimeZoneCurrent)
           
            
-      #Apend AnimalID variable and Genotype
+#Apend AnimalID variable and Genotype
           AnimalIDVariable<-rep(AnimalIDCurrent, nrow(SCPPDataframe))
           SCPPDataframe<-cbind(SCPPDataframe, AnimalIDVariable)
           Genotype<-rep(GenotypeCurrent, nrow(SCPPDataframe))
           SCPPDataframe<-cbind(SCPPDataframe, Genotype)
       
-       #Apend SCPPDataframe to SCPPDataframeEMG. To access an animal, used "filter()" 
+#Apend SCPPDataframe to SCPPDataframeEMG. To access an animal, used "filter()" 
           SCPPDataframeEMG<-rbind(SCPPDataframeEMG, SCPPDataframe)
 }
   
@@ -227,4 +227,52 @@ for(FileIndex in 1:length(FileList)){
 }
 
 rm(SCPPDataframeVideoTimes, VideoScoring)
+```
+
+
+Filter for sleep episodes identified by video and add REM/NREM variable
+```{r REM_NREM, echo=FALSE}
+
+SCPPDataframeSleep<-filter(SCPPDataframeVideoTimesAll, SleepWake=="S")
+SCPPDataframeSleep$ThetaDeltaHiLo<-ifelse(ThetaOverDelta>2, "High", 
+                                                  ifelse(ThetaOverDelta<1, "Low", "U"))
+                                                  
+SCPPDataframeSleep<-filter(SCPPDataframeSleep, ThetaDeltaHiLo=="High" | ThetaDeltaHiLo=="Low")
+```
+
+Compare EMG power in periods with theta/delta high and low
+```{r, EMG_Compare_PlottingChunk, include=TRUE, echo=FALSE}
+#if("plyr" %in% (.packages())){
+ # detach("package:plyr", unload=TRUE)
+#}
+#Group by AnimalID and ThetaDeltaHiLo
+ThetaDeltaHiLo_grouped<-dplyr::group_by(SCPPDataframeSleep, AnimalIDVariable, ThetaDeltaHiLo)
+#Compute the mean EMG Power for each animal in each behavioural state                     
+SummaryEMG<-dplyr::summarise(ThetaDeltaHiLo_grouped,
+                     MeanEMG=mean(EMG),
+                     num=n(),
+                     SEM=sd(EMG)/sqrt(n()),
+                     CI_L=CI(EMG)[1],
+                     CI_U=CI(EMG)[3]
+                     )
+
+
+
+
+EMG_Compare_Plot<-ggplot(SummaryEMG, 
+               aes(x=REM_NREM, 
+                   y=MeanEMG)) +
+  geom_line(aes(group=AnimalIDVariable)) +
+  geom_point(aes(group=AnimalIDVariable)) +
+  geom_errorbar(aes(ymin=CI_L, ymax=CI_U, width=0.4))+
+  ylab("EMG power") +
+  xlab(expression(theta) "/" expression(delta)) +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle=60, hjust=1))#+
+  #scale_color_brewer(palette = "Set1")
+  
+
+
+EMGPlot
+
 ```
